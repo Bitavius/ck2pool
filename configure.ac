@@ -51,7 +51,6 @@ sse4=
 sha2=
 if test $host_cpu = 'x86_64' && test x$YASM = xyes; then
 	cpuinfo=$(cat /proc/cpuinfo)
-	AC_MSG_RESULT(["cpuinfo=$cpuinfo"])
 
 	if [[[ $cpuinfo =~ sha_ni ]]]; then
 		 CFLAGS="$CFLAGS -msse4.1 -msha"
