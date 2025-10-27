@@ -3378,7 +3378,10 @@ static stratum_instance_t *__stratum_add_instance(ckpool_t *ckp, int64_t id, con
 	client = __recruit_stratum_instance(sdata);
 	ck_wunlock(&sdata->instance_lock);
 
-	client->start_time = time(NULL);
+	/* Fake a share time at startup to prevent client being dropped for
+	 * being idle. */
+	client->start_time = client->last_share.tv_sec = time(NULL);
+
 	client->id = id;
 	client->session_id = ++sdata->session_id;
 	strcpy(client->address, address);
