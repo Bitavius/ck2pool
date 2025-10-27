@@ -7901,6 +7901,12 @@ static worker_instance_t *next_worker(sdata_t *sdata, user_instance_t *user, wor
 	return worker;
 }
 
+static void lazy_drop_client(ckpool_t *ckp, stratum_instance_t *client)
+{
+	client->dropped = true;
+	connector_drop_client(ckp, client->id);
+}
+
 static void *statsupdate(void *arg)
 {
 	ckpool_t *ckp = (ckpool_t *)arg;
@@ -7953,10 +7959,8 @@ static void *statsupdate(void *arg)
 			} else if (!client->authorised) {
 				/* Test for clients that haven't authed in over a minute
 				 * and drop them lazily */
-				if (now.tv_sec > client->start_time + 60) {
-					client->dropped = true;
-					connector_drop_client(ckp, client->id);
-				}
+				if (now.tv_sec > client->start_time + 60)
+					lazy_drop_client(ckp, client);
 			} else {
 				per_tdiff = tvdiff(&now, &client->last_share);
 				/* Decay times per connected instance */
@@ -7964,10 +7968,15 @@ static void *statsupdate(void *arg)
 					/* No shares for over a minute, decay to 0 */
 					decay_client(client, 0, &now);
 					idle_workers++;
-					if (per_tdiff > 600)
+					if (ckp->dropidle && per_tdiff > ckp->dropidle) {
+						/* Drop clients idle for longer than
+						 * ckp->dropidle (default 1 day */
+						lazy_drop_client(ckp, client);
+					} else if (per_tdiff > 600) {
 						client->idle = true;
-					/* Test idle clients are still connected */
-					connector_test_client(ckp, client->id);
+						/* Test idle clients are still connected */
+						connector_test_client(ckp, client->id);
+					}
 				}
 			}
 
