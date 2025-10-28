@@ -318,6 +318,9 @@ the health of the bitcoin network.
 for a client to alter and is expressed as an hex string. Eg "00fff000"
 Default is "1fffe000".
 
+"dropidle" : Drop clients which have been idle for this duration in seconds,
+use 0 to disable. Default 3600 (1 hour.)
+
 "serverurl" : This is the IP(s) to try to bind ckpool uniquely to, otherwise it
 will attempt to bind to all interfaces in port 3333 by default in pool mode
 and 3334 in proxy mode. Multiple entries can be specified as an array by
