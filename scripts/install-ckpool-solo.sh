@@ -311,6 +311,8 @@ After=network.target
 User=$service_user
 ExecStart=/usr/local/bin/bitcoind -conf="$DATADIR/bitcoin.conf" -datadir="$DATADIR" -printtoconsole
 Restart=always
+TimeoutSec=120
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
