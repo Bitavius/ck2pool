@@ -8164,8 +8164,11 @@ static void *statsupdate(void *arg)
 
 		ASPRINTF(&fname, "%s/pool/pool.status", ckp->logdir);
 		fp = fopen(fname, "we");
-		if (unlikely(!fp))
+		if (unlikely(!fp)) {
 			LOGERR("Failed to fopen %s", fname);
+			dealloc(fname);
+			goto out_status;
+		}
 		dealloc(fname);
 
 		JSON_CPACK(val, "{si,si,si,si,si,si}",
@@ -8213,6 +8216,7 @@ static void *statsupdate(void *arg)
 		dealloc(s);
 		fclose(fp);
 
+out_status:
 		if (ckp->proxy && sdata->proxy) {
 			proxy_t *proxy, *proxytmp, *subproxy, *subtmp;
 
