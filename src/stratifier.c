@@ -6104,6 +6104,7 @@ static json_t *parse_submit(stratum_instance_t *client, json_t *json_msg,
 		id = sdata->current_workbase->id;
 		err = SE_INVALID_JOBID;
 		json_set_string(json_msg, "reject-reason", SHARE_ERR(err));
+		*err_val = JSON_ERR(err);
 		strncpy(idstring, job_id, 19);
 		ASPRINTF(&fname, "%s.sharelog", sdata->current_workbase->logdir);
 		goto out_nowb;
@@ -6166,6 +6167,7 @@ static json_t *parse_submit(stratum_instance_t *client, json_t *json_msg,
 		}
 		err = SE_STALE;
 		json_set_string(json_msg, "reject-reason", SHARE_ERR(err));
+		*err_val = JSON_ERR(err);
 		goto out_submit;
 	}
 no_stale:
@@ -6173,6 +6175,7 @@ no_stale:
 	if (ntime32 < wb->ntime32 || ntime32 > wb->ntime32 + 7000) {
 		err = SE_NTIME_INVALID;
 		json_set_string(json_msg, "reject-reason", SHARE_ERR(err));
+		*err_val = JSON_ERR(err);
 		goto out_put;
 	}
 	invalid = false;
@@ -6206,6 +6209,7 @@ out_nowb:
 			} else {
 				err = SE_DUPE;
 				json_set_string(json_msg, "reject-reason", SHARE_ERR(err));
+				*err_val = JSON_ERR(err);
 				LOGINFO("Rejected client %s dupe diff %.1f/%.0f/%s: %s",
 					client->identity, sdiff, diff, wdiffsuffix, hexhash);
 				submit = false;
@@ -6215,6 +6219,7 @@ out_nowb:
 			LOGINFO("Rejected client %s high diff %.1f/%.0f/%s: %s",
 				client->identity, sdiff, diff, wdiffsuffix, hexhash);
 			json_set_string(json_msg, "reject-reason", SHARE_ERR(err));
+			*err_val = JSON_ERR(err);
 			submit = false;
 		}
 	}  else
