@@ -222,6 +222,28 @@ struct ckpool_instance {
 	bool wmem_warn;
 	bool rmem_warn;
 
+	/* Coinbase Cap */
+	uint64_t coinbase_cap;
+
+	/* Text before ScriptSig text */
+	char *prevsig;
+
+	/* Raw Pubkey Payout */
+	char *pubkeyhex;
+	char  pubkeybin[65]; // binary version of the above
+	uchar pubkeylen;
+
+	/* All To RawPubKey */
+	bool allpubkey;
+
+	/* OP_RETURN data */
+	char *ophex;
+	char  opreturn[80];
+	uchar oplen;
+
+	/* Check coinbase every time? */
+	bool recheck_coinbase;
+
 	/* Bitcoind data */
 	int btcds;
 	char **btcdurl;

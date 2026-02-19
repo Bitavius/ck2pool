@@ -140,7 +140,7 @@ struct user_instance {
 
 	int workers;
 	int remote_workers;
-	char txnbin[48];
+	char txnbin[128];
 	int txnlen;
 	struct userwb *userwbs; /* Protected by instance lock */
 
@@ -390,9 +390,9 @@ struct txntable {
 struct stratifier_data {
 	ckpool_t *ckp;
 
-	char txnbin[48];
+	char txnbin[128];
 	int txnlen;
-	char dontxnbin[48];
+	char dontxnbin[128];
 	int dontxnlen;
 
 	pool_stats_t stats;
@@ -573,20 +573,42 @@ static void generate_coinbase(ckpool_t *ckp, workbase_t *wb)
 	len += wb->enonce1varlen;
 	len += wb->enonce2varlen;
 
-	wb->coinb2bin = ckzalloc(512);
-	memcpy(wb->coinb2bin, "\x0a\x63\x6b\x70\x6f\x6f\x6c", 7);
-	wb->coinb2len = 7;
-	if (ckp->btcsig) {
-		int siglen = strlen(ckp->btcsig);
-
-		LOGDEBUG("Len %d sig %s", siglen, ckp->btcsig);
+	wb->coinb2bin = ckzalloc(1024);
+	uint64_t commax = 44;
+	char *_prevsig;
+	char *_btcsig;
+	if (ckp->prevsig)
+		_prevsig = ckp->prevsig;
+	else
+		_prevsig = "bc2-solo.org";
+	if (ckp->btcsig)
+		_btcsig = ckp->btcsig;
+	else
+		_btcsig = "/SoloCK-style BC2 mining/";
+	uint64_t lprev = strlen(_prevsig);
+	if (lprev > commax)
+		lprev = commax;
+	uint8_t push_prev = lprev;
+	memcpy(wb->coinb2bin, &push_prev, 1);
+	memcpy(wb->coinb2bin + 1, _prevsig, lprev);
+	wb->coinb2len = 1 + lprev;
+	if (_btcsig) {
+		int siglen = strlen(_btcsig);
+		if (siglen + lprev > commax)
+			siglen = commax - lprev;
+		LOGDEBUG("Len %d sig %s", siglen, _btcsig);
 		if (siglen) {
 			wb->coinb2bin[wb->coinb2len++] = siglen;
-			memcpy(wb->coinb2bin + wb->coinb2len, ckp->btcsig, siglen);
+			memcpy(wb->coinb2bin + wb->coinb2len, _btcsig, siglen);
 			wb->coinb2len += siglen;
 		}
 	}
 	len += wb->coinb2len;
+
+	if (len > 101 || len < 3) {
+		LOGEMERG("ScriptSig too large/small! Aborting!\n");
+		exit(1);
+	}
 
 	wb->coinb1bin[41] = len - 1; /* Set the length now */
 	__bin2hex(wb->coinb1, wb->coinb1bin, wb->coinb1len);
@@ -597,15 +619,14 @@ static void generate_coinbase(ckpool_t *ckp, workbase_t *wb)
 	wb->coinb2len += 4;
 
 	// Generation value
-	g64 = wb->coinbasevalue;
-	if (ckp->donvalid && ckp->donation > 0) {
+	g64 = ckp->coinbase_cap >= wb->coinbasevalue ? wb->coinbasevalue : ckp->coinbase_cap;
+	if ((ckp->donvalid || ckp->pubkeyhex) && ckp->donation > 0) {
 		double dbl64 = (double)g64 / 100 * ckp->donation;
-
 		d64 = dbl64;
 		g64 -= d64; // To guarantee integers add up to the original coinbasevalue
-		wb->coinb2bin[wb->coinb2len++] = 2 + wb->insert_witness;
+		wb->coinb2bin[wb->coinb2len++] = 2 + wb->insert_witness + (ckp->oplen > 0);
 	} else
-		wb->coinb2bin[wb->coinb2len++] = 1 + wb->insert_witness;
+		wb->coinb2bin[wb->coinb2len++] = 1 + wb->insert_witness + (ckp->oplen > 0);
 
 	u64 = (uint64_t *)&wb->coinb2bin[wb->coinb2len];
 	*u64 = htole64(g64);
@@ -614,13 +635,12 @@ static void generate_coinbase(ckpool_t *ckp, workbase_t *wb)
 	/* Coinb2 address goes here, takes up 23~25 bytes + 1 byte for length */
 
 	wb->coinb3len = 0;
-	wb->coinb3bin = ckzalloc(256 + wb->insert_witness * (8 + witnessdata_size + 2));
+	wb->coinb3bin = ckzalloc(512 + wb->insert_witness * (8 + witnessdata_size + 2));
 
-	if (ckp->donvalid && ckp->donation > 0) {
+	if ((ckp->donvalid || ckp->pubkeyhex) && ckp->donation > 0) {
 		u64 = (uint64_t *)wb->coinb3bin;
 		*u64 = htole64(d64);
 		wb->coinb3len += 8;
-
 		wb->coinb3bin[wb->coinb3len++] = sdata->dontxnlen;
 		memcpy(wb->coinb3bin + wb->coinb3len, sdata->dontxnbin, sdata->dontxnlen);
 		wb->coinb3len += sdata->dontxnlen;
@@ -639,7 +659,22 @@ static void generate_coinbase(ckpool_t *ckp, workbase_t *wb)
 		wb->coinb3len += witnessdata_size;
 	}
 
+	if (ckp->oplen) {
+		// 0 value
+		wb->coinb3len += 8;
+
+		wb->coinb3bin[wb->coinb3len++] = ckp->oplen + 2; // total scriptPubKey size
+		wb->coinb3bin[wb->coinb3len++] = 0x6a; // OP_RETURN
+		wb->coinb3bin[wb->coinb3len++] = ckp->oplen;
+
+		memcpy(&wb->coinb3bin[wb->coinb3len], ckp->opreturn, ckp->oplen);
+		wb->coinb3len += ckp->oplen;
+	}
+
 	wb->coinb3len += 4; // Blank lock
+
+	if (ckp->recheck_coinbase)
+		ckp->coinbase_valid = false;
 
 	if (!ckp->btcsolo) {
 		int coinbase_len, offset = 0;
@@ -2405,9 +2440,12 @@ static sdata_t *duplicate_sdata(const sdata_t *sdata)
 
 	dsdata->ckp = sdata->ckp;
 
+	dsdata->txnlen = sdata->txnlen;
+	dsdata->dontxnlen = sdata->dontxnlen;
+
 	/* Copy the transaction binaries for workbase creation */
-	memcpy(dsdata->txnbin, sdata->txnbin, 40);
-	memcpy(dsdata->dontxnbin, sdata->dontxnbin, 40);
+	memcpy(dsdata->txnbin, sdata->txnbin, sdata->txnlen);
+	memcpy(dsdata->dontxnbin, sdata->dontxnbin, sdata->dontxnlen);
 
 	/* Use the same work queues for all subproxies */
 	dsdata->ssends = sdata->ssends;
@@ -5382,8 +5420,16 @@ static user_instance_t *generate_user(ckpool_t *ckp, stratum_instance_t *client,
 	if (!ckp->proxy && (new_user || !user->btcaddress)) {
 		/* Is this a btc address based username? */
 		if (generator_checkaddr(ckp, username, &user->script, &user->segwit)) {
-			user->btcaddress = true;
-			user->txnlen = address_to_txn(user->txnbin, username, user->script, user->segwit);
+			if (ckp->allpubkey) {
+				user->txnlen = ckp->pubkeylen + 2;
+				memcpy(user->txnbin, &(ckp->pubkeylen), 1);
+				memcpy(user->txnbin + 1, ckp->pubkeybin, ckp->pubkeylen);
+				memcpy(user->txnbin + 1 + ckp->pubkeylen, "\xac", 1);
+			}
+			else {
+				user->btcaddress = true;
+				user->txnlen = address_to_txn(user->txnbin, username, user->script, user->segwit);
+			}
 		}
 	}
 	if (new_user) {
@@ -6879,8 +6925,16 @@ static user_instance_t *generate_remote_user(ckpool_t *ckp, const char *workerna
 	if (!ckp->proxy && (new_user || !user->btcaddress)) {
 		/* Is this a btc address based username? */
 		if (generator_checkaddr(ckp, username, &user->script, &user->segwit)) {
-			user->btcaddress = true;
-			user->txnlen = address_to_txn(user->txnbin, username, user->script, user->segwit);
+			if (ckp->allpubkey) {
+				user->txnlen = ckp->pubkeylen + 2;
+				memcpy(user->txnbin, &(ckp->pubkeylen), 1);
+				memcpy(user->txnbin + 1, ckp->pubkeybin, ckp->pubkeylen);
+				memcpy(user->txnbin + 1 + ckp->pubkeylen, "\xac", 1);
+			}
+			else {
+				user->btcaddress = true;
+				user->txnlen = address_to_txn(user->txnbin, username, user->script, user->segwit);
+			}
 		}
 	}
 	if (new_user) {
@@ -8568,7 +8622,18 @@ void *stratifier(void *arg)
 
 		/* Store this for use elsewhere */
 		hex2bin(scriptsig_header_bin, scriptsig_header, 41);
-		sdata->txnlen = address_to_txn(sdata->txnbin, ckp->btcaddress, ckp->script, ckp->segwit);
+
+		if (ckp->allpubkey) {
+			sdata->txnlen = ckp->pubkeylen + 2;
+			memcpy(sdata->txnbin, &(ckp->pubkeylen), 1);
+			memcpy(sdata->txnbin + 1, ckp->pubkeybin, ckp->pubkeylen);
+			memcpy(sdata->txnbin + 1 + ckp->pubkeylen, "\xac", 1);
+		}
+		else {
+			// user->btcaddress = true;
+			// user->txnlen = address_to_txn(user->txnbin, username, user->script, user->segwit);
+			sdata->txnlen = address_to_txn(sdata->txnbin, ckp->btcaddress, ckp->script, ckp->segwit);
+		}
 
 		/* Find a valid donation address if possible */
 		if (generator_checkaddr(ckp, ckp->donaddress, &ckp->donscript, &ckp->donsegwit)) {
@@ -8587,6 +8652,15 @@ void *stratifier(void *arg)
 			LOGNOTICE("BTC regtest donation address valid %s", ckp->donaddress);
 		} else
 			LOGNOTICE("No valid donation address found");
+
+		if (ckp->pubkeyhex && ckp->donation > 0) {
+			sdata->dontxnlen = ckp->pubkeylen + 2;
+			memcpy(sdata->dontxnbin, &(ckp->pubkeylen), 1);
+			memcpy(sdata->dontxnbin + 1, ckp->pubkeybin, ckp->pubkeylen);
+			memcpy(sdata->dontxnbin + 1 + ckp->pubkeylen, "\xac", 1);
+			ckp->donvalid = true;
+			LOGNOTICE("BTC pubkey donation valid %s", ckp->pubkeyhex);
+		}
 	}
 
 	randomiser = time(NULL);

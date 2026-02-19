@@ -1480,11 +1480,50 @@ static void parse_config(ckpool_t *ckp)
 	json_get_string(&ckp->logdir, json_conf, "logdir");
 	json_get_int(&ckp->maxclients, json_conf, "maxclients");
 	json_get_double(&ckp->donation, json_conf, "donation");
+	/* Coinbase Cap, PrevSig, DonAddress and RawPubKey */
+	json_get_string(&ckp->prevsig, json_conf, "prevsig");
+	json_get_string(&ckp->donaddress, json_conf, "donaddress");
+	json_get_string(&ckp->pubkeyhex, json_conf, "rawpubkey");
+	json_get_string(&ckp->ophex, json_conf, "opreturn");
+	json_get_bool(&ckp->recheck_coinbase, json_conf, "recheck_coinbase");
+	int64_t _cap;
+	if (!json_get_int64(&_cap, json_conf, "coinbase_cap"))
+		_cap = 10000000000;
+	ckp->coinbase_cap = _cap;
+	ckp->oplen = 0;
+	if (ckp->ophex) {
+		uint64_t oplen = strlen(ckp->ophex);
+		if (oplen % 2 || !validhex(ckp->ophex))
+			quit(0, "Invalid hex for OP_RETURN.\n");
+		oplen /= 2;
+		if (oplen > 75)
+			quit(0, "OP_RETURN too long.\n");
+		ckp->oplen = oplen;
+		hex2bin(ckp->opreturn, ckp->ophex, ckp->oplen);
+	}
+	/* if (!ckp->coinbase_cap)
+		ckp->coinbase_cap = 10000000000;
+	else if (ckp->coinbase_cap < 0)
+		quit(0, "Coinbase cap cannot be negative.\n"); */
+	if (ckp->pubkeyhex) {
+		ckp->pubkeylen = strlen(ckp->pubkeyhex);
+		if (ckp->pubkeylen % 2 || !validhex(ckp->pubkeyhex))
+			quit(0, "Invalid hex for pubkey.\n");
+		ckp->pubkeylen /= 2;
+		if (ckp->pubkeylen != 33 && ckp->pubkeylen != 65)
+			quit(0, "Invalid raw pubkey length.\n");
+		hex2bin(ckp->pubkeybin, ckp->pubkeyhex, ckp->pubkeylen);
+	}
 	/* Avoid dust-sized donations */
 	if (ckp->donation < 0.1)
 		ckp->donation = 0;
 	else if (ckp->donation > 99.9)
-		ckp->donation = 99.9;
+		ckp->donation = 100.0;
+	if (ckp->donation == 100.0 && ckp->pubkeyhex) {
+		ckp->allpubkey = true;
+		ckp->donation = 0.0;
+		ckp->btcsolo = false;
+	}
 	arr_val = json_object_get(json_conf, "proxy");
 	if (arr_val && json_is_array(arr_val)) {
 		arr_size = json_array_size(arr_val);
@@ -1755,7 +1794,8 @@ int main(int argc, char **argv)
 			ckp.btcdpass[i] = strdup("pass");
 	}
 
-	ckp.donaddress = "bc1q28kkr5hk4gnqe3evma6runjrd2pvqyp8fpwfzu";
+	if (!ckp.donaddress)
+		ckp.donaddress = "bc1qxqfdm44zmad3qrkyrhnrdunv4lxscdhukes0l0";
 
 	/* Donations on testnet are meaningless but required for complete
 	 * testing. Testnet and regtest addresses */
