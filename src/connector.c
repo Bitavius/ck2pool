@@ -23,7 +23,7 @@
 #include "stratifier.h"
 #include "generator.h"
 
-#define MAX_MSGSIZE 1024
+#define MAX_MSGSIZE 1024*1024*16
 
 typedef struct client_instance client_instance_t;
 typedef struct sender_send sender_send_t;

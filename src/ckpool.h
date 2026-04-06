@@ -126,6 +126,38 @@ struct server_instance {
 
 typedef struct server_instance server_instance_t;
 
+/* typedef struct btc_addr {
+	char *address; // P2WSH is the longest at 62 chars. +1 byte for null byte (+1 for pretty)
+	bool is_script;
+	bool is_segwit;
+	double weight; // payout weight
+	uint64_t max_cap; // maximum absolute payout (sats)
+} btcaddr;
+
+typedef struct btc_script {
+	char *script; // P2WSH is the longest at 62 chars. +1 byte for null byte (+1 for pretty)
+	double weight; // payout weight
+	uint64_t max_cap; // maximum absolute payout (sats)
+} btcscript;
+
+typedef struct final_script {
+	char *hex_script;
+	uint64_t sats;
+} fscript; */
+
+typedef struct coinbase_payout {
+	char *address; // will remain as NULL if scriptPubKey was passed directly in JSON array
+	bool script; // SAME CK FLAG AS FOR SINGLE BTCADDRESS - NOTHING TO DO WITH MY OWN SCRIPT PARSING
+	bool segwit; // SAME CK FLAG AS FOR SINGLE BTCADDRESS - NOT MY OWN STUFF
+	char *scriptPubKey; // will be NULL at start if entry was address, else always populated
+	uchar *scriptPubKey_bin;
+	uint64_t scriptSize; // BINARY LENGTH
+	double weight; // if weight non-negative -> weight set + maybe max_sats
+	uint64_t max_sats; // if weight non-negative -> max_sats maybe set, else UINT64_MAX
+	uint64_t sats; // if weight is negative, then sats is set, else, not set
+	uchar *aptr; // Pointer to amount (in sats) in fatblob
+} cb_payout;
+
 struct ckpool_instance {
 	/* Start time */
 	time_t starttime;
@@ -222,28 +254,6 @@ struct ckpool_instance {
 	bool wmem_warn;
 	bool rmem_warn;
 
-	/* Coinbase Cap */
-	uint64_t coinbase_cap;
-
-	/* Text before ScriptSig text */
-	char *prevsig;
-
-	/* Raw Pubkey Payout */
-	char *pubkeyhex;
-	char  pubkeybin[65]; // binary version of the above
-	uchar pubkeylen;
-
-	/* All To RawPubKey */
-	bool allpubkey;
-
-	/* OP_RETURN data */
-	char *ophex;
-	char  opreturn[80];
-	uchar oplen;
-
-	/* Check coinbase every time? */
-	bool recheck_coinbase;
-
 	/* Bitcoind data */
 	int btcds;
 	char **btcdurl;
@@ -261,18 +271,35 @@ struct ckpool_instance {
 	int64_t maxdiff; // No default
 
 	/* Coinbase data */
-	char *btcaddress; // Address to mine to
+	char *btcaddress; // Address to mine to - ignored if `payouts` is present
 	bool script; // Address is a script address
 	bool segwit; // Address is a segwit address
+	/* int naddresses;
+	int nscripts;
+	int nfinalscripts;
+	btcaddr *btcaddresses; // Addresses to mine to
+	btcscript *btcscripts; */ // Scripts to mine to
+	uint64_t npayouts; // Number of payouts
+	uint64_t nscripts; // Number of raw scripts - helps to know this
+	cb_payout *payouts; // Array of coinbase payouts
+	uchar *fatblob_bin; // Entire blob of serialised bytes of outputs
+	uint64_t fatblobsize; // Size of fatblob (bytes)
+	bool havaw; // Whether we have a weight entry or not (even if zero)
+	double totweight; // Sum of weights
+	uint64_t totsats; // Sum of direct "sats" amounts
+	uint64_t totscriptlen; // Sum of script sizes (not including address locking scripts initially)
 	char *btcsig; // Optional signature to add to coinbase
+	uint64_t coinbase_cap; // Maximum number of sats at which to cap the coinbase
 	bool coinbase_valid; // Coinbase transaction confirmed valid
 
+	bool mine_empty; // whether to mine empty blocks or not
+
 	/* Donation data */
-	char *donaddress; // Donation address
+	char *donaddress; // Donation address - gets hardcoded in ckpool.c
 	char *tndonaddress; // Testnet donation address
 	char *rtdonaddress; // Regtest donation address
-	bool donscript; // Donation is a script
-	bool donsegwit; // Donation is segwit
+	bool donscript; // Donation is a script - always false
+	bool donsegwit; // Donation is segwit - always true
 	bool donvalid; // Donation address works on this network
 	double donation; // Percentage donation to development
 

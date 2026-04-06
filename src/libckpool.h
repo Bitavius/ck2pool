@@ -149,6 +149,10 @@ static inline void flip_80(void *dest_p, const void *src_p)
 		dest[i] = bswap_32(src[i]);
 }
 
+static inline uint64_t block_subsidy(int height) {
+	return 5000000000 >> (height/210000);
+}
+
 #define cond_wait(_cond, _lock) _cond_wait(_cond, _lock, __FILE__, __func__, __LINE__)
 #define cond_timedwait(_cond, _lock, _abstime) _cond_timedwait(_cond, _lock, _abstime, __FILE__, __func__, __LINE__)
 #define mutex_timedlock(_lock, _timeout) _mutex_timedlock(_lock, _timeout, __FILE__, __func__, __LINE__)

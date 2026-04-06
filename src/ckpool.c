@@ -1422,6 +1422,93 @@ out:
 }
 
 
+static void parse_addrs(ckpool_t *ckp, const json_t *addr_arr) {
+	if (ckp->btcaddress || !addr_arr || !ckp->npayouts)
+		return;
+	ckp->payouts = (cb_payout *) ckzalloc(ckp->npayouts*sizeof(cb_payout)); // when FREE?
+	cb_payout *pptr = ckp->payouts;
+	char *addrstr;
+	double weight;
+	int64_t max_sats;
+	int64_t sats;
+	bool wset;
+	bool mset;
+	bool sset;
+	ckp->totweight = 0.0;
+	ckp->totsats = 0;
+	ckp->totscriptlen = 0;
+	json_t *val;
+	uint64_t i = 0;
+	uint64_t top = ckp->npayouts - (ckp->donation > 0.0);
+	ckp->havaw = false;
+	while (i < top) {
+		addrstr = NULL;
+		weight = -1.0;
+		val = json_array_get(addr_arr, i++);
+		json_get_string(&addrstr, val, "address");
+		if (!addrstr) {
+			json_get_string(&addrstr, val, "script");
+			pptr->address = NULL;
+			pptr->scriptPubKey = addrstr;
+		} else {
+			pptr->address = addrstr;
+			pptr->scriptPubKey = NULL;
+		}
+		if (!addrstr)
+			quit(1, "Missing address/script key.\n");
+		if (pptr->scriptPubKey) {
+			if (!validhex(pptr->scriptPubKey)) // validhex checks that the string is divisible by 2
+				quit(1, "Invalid hex: %s\n", pptr->scriptPubKey);
+			pptr->scriptSize = strlen(pptr->scriptPubKey)/2;
+			pptr->scriptPubKey_bin = ckzalloc(pptr->scriptSize);
+			hex2bin(pptr->scriptPubKey_bin, pptr->scriptPubKey, pptr->scriptSize);
+			ckp->totscriptlen += pptr->scriptSize;
+			++ckp->nscripts;
+		}
+		wset = json_get_double(&weight, val, "weight");
+		mset = json_get_int64(&max_sats, val, "max_sats");
+		sset = json_get_int64(&sats, val, "sats");
+		if (!wset && mset)
+			quit(1, "max_sats cannot be set without weight.\n");
+		if (sset && wset)
+			quit(1, "sats cannot be set at the same time as weight or max_sats.\n");
+		if (!wset && !sset)
+			quit(1, "one of weight or sats must be set.\n");
+		if (wset) {
+			if (weight < 0)
+				quit(1, "Invalid weight: %lf\n", weight);
+			if (mset) {
+				if (max_sats < 0)
+					quit(1, "Max sats cannot be negative: %" PRId64 "\n", max_sats);
+				pptr->max_sats = max_sats;
+			} else
+				pptr->max_sats = UINT64_MAX;
+			pptr->weight = weight;
+			ckp->totweight += weight;
+			pptr->sats = UINT64_MAX;
+			ckp->havaw = true;
+		} else {
+			if (sats < 0)
+				quit(1, "Sats cannot be negative: %" PRId64 "\n", sats);
+			pptr->sats = sats;
+			ckp->totsats += sats;
+			pptr->weight = -1.0;
+			pptr->max_sats = UINT64_MAX;
+		}
+		++pptr;
+	}
+	if (ckp->donation > 0.0) {
+		// add entry for ckp->donaddress
+		// ckp->naddresses already includes donaddress
+		pptr->address = ckp->donaddress;
+		pptr->scriptPubKey = NULL;
+		pptr->weight = ckp->donation;
+		pptr->max_sats = UINT64_MAX;
+		pptr->sats = UINT64_MAX;
+		ckp->totweight += ckp->donation;
+	}
+}
+
 static void parse_config(ckpool_t *ckp)
 {
 	json_t *json_conf, *arr_val;
@@ -1441,11 +1528,57 @@ static void parse_config(ckpool_t *ckp)
 		if (arr_size)
 			parse_btcds(ckp, arr_val, arr_size);
 	}
+	ckp->donation = -1.0;
+	json_get_double(&ckp->donation, json_conf, "donation"); // treated as weight, not proportion
+	/* We don't care about dust-sized donations: the client is always right, in matters of taste. */
+	/* if (ckp->donation < 0.1)
+		ckp->donation = 0;
+	else if (ckp->donation > 99.9)
+		ckp->donation = 99.9; */
+	if (ckp->donation < 0)
+		ckp->donation = 0;
+	int64_t ccap = INT64_MAX;
+	json_get_int64(&ccap, json_conf, "coinbase_cap");
+	if (ccap < 0)
+		ccap = 0; // You wanna get paid zero sats? Fine!
+	ckp->coinbase_cap = (uint64_t) ccap;
+	ckp->btcaddress = NULL;
 	json_get_string(&ckp->btcaddress, json_conf, "btcaddress");
+	int addr_arr_size = 0;
+	if (ckp->btcsolo) {
+		ckp->npayouts = 0;
+		ckp->payouts  = NULL;
+		goto rest;
+	}
+	json_t *addr_arr = json_object_get(json_conf, "btcaddresses");
+	if (addr_arr) {
+		if (!json_is_array(addr_arr))
+			quit(1, "Expected btcaddresses to be of type array.\n");
+		addr_arr_size = json_array_size(addr_arr);
+		if (addr_arr_size) {
+			ckp->btcaddress = NULL;
+		} else if (!ckp->btcaddress)
+			quit(1, "Need one of btcaddress and btcaddresses.\n");
+	} else if (!ckp->btcaddress)
+		quit(1, "Need one of btcaddress and btcaddresses.\n");
+	if (addr_arr)
+		if (!addr_arr_size) // Deal with btcsolo mode.
+			quit(1, "Addresses array cannot be empty.\n");
+	ckp->npayouts = addr_arr_size + (ckp->donation > 0.0 && addr_arr_size > 0);
+	if (ckp->npayouts > 10000)
+		quit(1, "Far too many payouts!\n");
+
+	ckp->payouts = NULL;
+	if (!ckp->btcaddress)
+		parse_addrs(ckp, addr_arr);
+rest:
+	ckp->mine_empty = false;
+	json_get_bool(&ckp->mine_empty, json_conf, "mine_empty");
+
 	json_get_string(&ckp->btcsig, json_conf, "btcsig");
-	if (ckp->btcsig && strlen(ckp->btcsig) > 38) {
-		LOGWARNING("Signature %s too long, truncating to 38 bytes", ckp->btcsig);
-		ckp->btcsig[38] = '\0';
+	if (ckp->btcsig && strlen(ckp->btcsig) > 70) { // This is the VERY maximum! Assumes zero coinbaseaux flags. Is still checked in generate_coinbase()
+		LOGWARNING("Signature %s too long, truncating to 70 bytes", ckp->btcsig);
+		ckp->btcsig[70] = '\0';
 	}
 	json_get_int(&ckp->blockpoll, json_conf, "blockpoll");
 	json_get_int(&ckp->nonce1length, json_conf, "nonce1length");
@@ -1479,51 +1612,6 @@ static void parse_config(ckpool_t *ckp)
 	json_get_int64(&ckp->maxdiff, json_conf, "maxdiff");
 	json_get_string(&ckp->logdir, json_conf, "logdir");
 	json_get_int(&ckp->maxclients, json_conf, "maxclients");
-	json_get_double(&ckp->donation, json_conf, "donation");
-	/* Coinbase Cap, PrevSig, DonAddress and RawPubKey */
-	json_get_string(&ckp->prevsig, json_conf, "prevsig");
-	json_get_string(&ckp->donaddress, json_conf, "donaddress");
-	json_get_string(&ckp->pubkeyhex, json_conf, "rawpubkey");
-	json_get_string(&ckp->ophex, json_conf, "opreturn");
-	json_get_bool(&ckp->recheck_coinbase, json_conf, "recheck_coinbase");
-	int64_t _cap;
-	if (!json_get_int64(&_cap, json_conf, "coinbase_cap"))
-		_cap = 10000000000;
-	ckp->coinbase_cap = _cap;
-	ckp->oplen = 0;
-	if (ckp->ophex) {
-		uint64_t oplen = strlen(ckp->ophex);
-		if (oplen % 2 || !validhex(ckp->ophex))
-			quit(0, "Invalid hex for OP_RETURN.\n");
-		oplen /= 2;
-		if (oplen > 75)
-			quit(0, "OP_RETURN too long.\n");
-		ckp->oplen = oplen;
-		hex2bin(ckp->opreturn, ckp->ophex, ckp->oplen);
-	}
-	/* if (!ckp->coinbase_cap)
-		ckp->coinbase_cap = 10000000000;
-	else if (ckp->coinbase_cap < 0)
-		quit(0, "Coinbase cap cannot be negative.\n"); */
-	if (ckp->pubkeyhex) {
-		ckp->pubkeylen = strlen(ckp->pubkeyhex);
-		if (ckp->pubkeylen % 2 || !validhex(ckp->pubkeyhex))
-			quit(0, "Invalid hex for pubkey.\n");
-		ckp->pubkeylen /= 2;
-		if (ckp->pubkeylen != 33 && ckp->pubkeylen != 65)
-			quit(0, "Invalid raw pubkey length.\n");
-		hex2bin(ckp->pubkeybin, ckp->pubkeyhex, ckp->pubkeylen);
-	}
-	/* Avoid dust-sized donations */
-	if (ckp->donation < 0.1)
-		ckp->donation = 0;
-	else if (ckp->donation > 99.9)
-		ckp->donation = 100.0;
-	if (ckp->donation == 100.0 && ckp->pubkeyhex) {
-		ckp->allpubkey = true;
-		ckp->donation = 0.0;
-		ckp->btcsolo = false;
-	}
 	arr_val = json_object_get(json_conf, "proxy");
 	if (arr_val && json_is_array(arr_val)) {
 		arr_size = json_array_size(arr_val);
@@ -1776,6 +1864,18 @@ int main(int argc, char **argv)
 	if (ret && errno != EEXIST)
 		quit(1, "Failed to make directory %s", ckp.socket_dir);
 
+
+	// if (!ckp.donaddress)
+
+	/* Given that N addresses can now be included in the coinbase, I have made the design choice
+	 * to obviate the donation address. Furthermore, our dear CK doesn't even parse "donaddress"
+	 * in `ckpool.conf`, so I am leaving the donation address as a hardcoded constant.
+	 *
+	 * If miners wish to actually "donate" to a different address, they can set "donation" to 0.0,
+	 * and then append their desired donation address to the "btcaddresses" array.
+	 */
+	ckp.donaddress = "bc1qduqgectrkjj5a54cfz7cxqcsydaj3vr3c7gvya";
+
 	parse_config(&ckp);
 	/* Set defaults if not found in config file */
 	if (!ckp.btcds) {
@@ -1794,16 +1894,13 @@ int main(int argc, char **argv)
 			ckp.btcdpass[i] = strdup("pass");
 	}
 
-	if (!ckp.donaddress)
-		ckp.donaddress = "bc1qxqfdm44zmad3qrkyrhnrdunv4lxscdhukes0l0";
-
 	/* Donations on testnet are meaningless but required for complete
 	 * testing. Testnet and regtest addresses */
 	ckp.tndonaddress = "tb1q5fyv7tue73y4zxezh2c685qpwx0cfngfxlrgxh";
 	ckp.rtdonaddress = "bcrt1qlk935ze2fsu86zjp395uvtegztrkaezawxx0wf";
 
-	if (!ckp.btcaddress && !ckp.btcsolo && !ckp.proxy)
-		quit(0, "Non solo mining must have a btcaddress in config, aborting!");
+	if (!ckp.btcaddress && !ckp.btcsolo && !ckp.proxy && !ckp.payouts)
+		quit(0, "Non solo mining must have btcaddress/es in config, aborting!");
 	if (!ckp.blockpoll)
 		ckp.blockpoll = 100;
 	if (!ckp.nonce1length)
