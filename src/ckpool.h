@@ -288,7 +288,9 @@ struct ckpool_instance {
 	double totweight; // Sum of weights
 	uint64_t totsats; // Sum of direct "sats" amounts
 	uint64_t totscriptlen; // Sum of script sizes (not including address locking scripts initially)
-	char *btcsig; // Optional signature to add to coinbase
+	char    *btcsig; // Optional signature to add to coinbase
+	uint64_t btcsiglen; // Length of coinbase tag
+	char    *btcsighex; // Coinbase tag but hex-encoded (so can be arbitrary data)
 	uint64_t coinbase_cap; // Maximum number of sats at which to cap the coinbase
 	bool coinbase_valid; // Coinbase transaction confirmed valid
 

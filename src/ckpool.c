@@ -1576,9 +1576,28 @@ rest:
 	json_get_bool(&ckp->mine_empty, json_conf, "mine_empty");
 
 	json_get_string(&ckp->btcsig, json_conf, "btcsig");
-	if (ckp->btcsig && strlen(ckp->btcsig) > 70) { // This is the VERY maximum! Assumes zero coinbaseaux flags. Is still checked in generate_coinbase()
+	json_get_string(&ckp->btcsighex, json_conf, "btcsighex");
+	if (ckp->btcsig && ckp->btcsighex) {
+		quit(1, "btcsig and btcsighex are mutually exclusive.\n");
+	}
+	ckp->btcsiglen = 0;
+	if (ckp->btcsig && (ckp->btcsiglen = strlen(ckp->btcsig)) > 70) { // This is the VERY maximum! Assumes zero coinbaseaux flags. Is still checked in generate_coinbase()
 		LOGWARNING("Signature %s too long, truncating to 70 bytes", ckp->btcsig);
 		ckp->btcsig[70] = '\0';
+		ckp->btcsiglen = 70;
+	} else if (ckp->btcsighex) {
+		if ((ckp->btcsiglen = strlen(ckp->btcsighex)) > 140) {
+			LOGWARNING("Signature %s too long, truncating to 70 bytes", ckp->btcsighex);
+			ckp->btcsighex[140] = '\0';
+			ckp->btcsiglen = 140;
+		}
+		if (!validhex(ckp->btcsighex))
+			quit(1, "btcsighex is not valid hex.\n");
+		ckp->btcsiglen /= 2;
+		ckp->btcsig = ckzalloc(ckp->btcsiglen);
+		hex2bin(ckp->btcsig, ckp->btcsighex, ckp->btcsiglen);
+		free(ckp->btcsighex);
+		ckp->btcsighex = NULL;
 	}
 	json_get_int(&ckp->blockpoll, json_conf, "blockpoll");
 	json_get_int(&ckp->nonce1length, json_conf, "nonce1length");

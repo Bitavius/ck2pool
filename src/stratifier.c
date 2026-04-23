@@ -580,11 +580,12 @@ static void generate_coinbase(ckpool_t *ckp, workbase_t *wb)
 	// memcpy(wb->coinb2bin, "\x0ackpool", 7); // customise
 	wb->coinb2len = 0; //7;
 	if (ckp->btcsig) {
-		int siglen = strlen(ckp->btcsig);
-		int _ulen;
+		// uint64_t siglen = strlen(ckp->btcsig);
+		uint64_t siglen = ckp->btcsiglen;
+		uint64_t _ulen;
 		if ((_ulen = siglen + _flaglen) > 70)
 			siglen -= (_ulen - 70);
-		LOGDEBUG("Len %d sig %s", siglen, ckp->btcsig);
+		// LOGDEBUG("Len %d sig %s", siglen, ckp->btcsig);
 		if (siglen) {
 			wb->coinb2bin[wb->coinb2len++] = siglen;
 			memcpy(wb->coinb2bin + wb->coinb2len, ckp->btcsig, siglen);
@@ -596,7 +597,8 @@ zlennn:
 		wb->coinb2bin[0] = 0x61; // OP_NOP
 		wb->coinb2len = 1;
 	}
-        wb->coinb2bin[wb->coinb2len++] = 0xaa; // OP_HASH256
+
+	wb->coinb2bin[wb->coinb2len++] = 0xaa; // OP_HASH256
 
 	len += wb->coinb2len;
 
